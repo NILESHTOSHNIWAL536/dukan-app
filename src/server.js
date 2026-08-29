@@ -21,6 +21,13 @@ app.use(
   express.static(path.join(__dirname, "uploads"))
 );
 
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "Dukan API is running",
+  });
+});
+
 app.get("/api/health", (req, res) => {
   const mongoose = require("mongoose");
   res.json({ ok: true, database: mongoose.connection.readyState === 1 ? "connected" : "disconnected" });
