@@ -1,0 +1,10 @@
+const router = require("express").Router();
+const auth = require("../middleware/auth");
+const Model = require("../models/Driver");
+const controller = require("../controllers/resourceController")(Model, ["name", "phone", "vehicleNumber"]);
+router.use(auth);
+router.get("/", controller.list);
+router.post("/", controller.create);
+router.patch("/:id", controller.update);
+router.delete("/:id", controller.remove);
+module.exports = router;
