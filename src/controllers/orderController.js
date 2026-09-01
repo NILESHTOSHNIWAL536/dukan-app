@@ -74,95 +74,578 @@ async function list(req, res) {
 }
 
 async function create(req, res) {
-  const clientId = req.body.client || req.body.clientId;
-  const riceMillId = req.body.riceMill || req.body.riceMillId;
-  if (!mongoose.isValidObjectId(clientId) || !mongoose.isValidObjectId(riceMillId)) {
-    return res.status(400).json({ message: "Client and rice mill are required" });
+  try {
+    console.log("req.body");
+    console.log(req.body);
+
+    const clientId = req.body.client || req.body.clientId;
+    const riceMillId = req.body.riceMill || req.body.riceMillId;
+
+    if (
+      !mongoose.isValidObjectId(clientId) ||
+      !mongoose.isValidObjectId(riceMillId)
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Client and rice mill are required" });
+    }
+
+    const owner = req.user.id;
+
+    const [client, riceMill] = await Promise.all([
+      Client.findOne({ _id: clientId, owner }),
+      RiceMill.findOne({ _id: riceMillId, owner }),
+    ]);
+
+    if (!client) {
+      return res.status(400).json({
+        message: "Invalid client",
+      });
+    }
+
+    if (!riceMill) {
+      return res.status(400).json({
+        message: "Invalid rice mill",
+      });
+    }
+
+    // ------------------------------------------------------------
+    // ITEMS
+    // ------------------------------------------------------------
+
+    const items = normalizeItems(req.body.items);
+
+    if (!items.length) {
+      return res.status(400).json({
+        message: "At least one valid rice item is required",
+      });
+    }
+
+    // ------------------------------------------------------------
+    // ORIGINAL TOTAL
+    // ------------------------------------------------------------
+
+    const calculatedTotals = calculateTotals(items);
+
+    const grandTotal = Number(calculatedTotals.grandTotal || 0);
+
+    // ------------------------------------------------------------
+    // DISCOUNT
+    // Allowed only from 0% to 6%
+    // ------------------------------------------------------------
+
+    let discountPercentage = Number(
+      req.body.discountPercentage ?? 0
+    );
+
+    // Invalid discount
+    if (!Number.isFinite(discountPercentage)) {
+      discountPercentage = 0;
+    }
+
+    // Force discount between 0 and 6
+    discountPercentage = Math.min(
+      Math.max(discountPercentage, 0),
+      6
+    );
+
+    // Optional: keep only whole percentages
+    discountPercentage = Math.round(discountPercentage);
+
+    // ------------------------------------------------------------
+    // DISCOUNT AMOUNT
+    // ------------------------------------------------------------
+
+    const discountAmount =
+      grandTotal * (discountPercentage / 100);
+
+    // ------------------------------------------------------------
+    // NET TOTAL
+    // ------------------------------------------------------------
+
+    const netTotal = Math.max(
+      grandTotal - discountAmount,
+      0
+    );
+
+    // ------------------------------------------------------------
+    // FINAL TOTALS
+    // ------------------------------------------------------------
+
+    const totals = {
+      bags: Number(calculatedTotals.totalBags || 0),
+      kg: Number(calculatedTotals.totalKg || 0),
+      quintal: Number(calculatedTotals.totalQuintal || 0),
+
+      // Original bill amount
+      grandTotal,
+
+      // Discount
+      discountPercentage,
+      discountAmount,
+
+      // Final payable amount
+      netTotal,
+    };
+
+    // ------------------------------------------------------------
+    // PAID AMOUNT
+    // IMPORTANT:
+    // Paid amount cannot be greater than NET TOTAL
+    // ------------------------------------------------------------
+
+    const paidAmount = Math.min(
+      Math.max(Number(req.body.paidAmount) || 0, 0),
+      netTotal
+    );
+
+    // ------------------------------------------------------------
+    // DATE
+    // ------------------------------------------------------------
+
+    const orderDate = parseIndianDate(
+      req.body.date || req.body.displayDate
+    );
+
+    // ------------------------------------------------------------
+    // DRIVER
+    // ------------------------------------------------------------
+
+    const driver = await ensureDriver(
+      owner,
+      req.body.driverName,
+      req.body.driverMobile,
+      req.body.lorryNumber
+    );
+
+    // ------------------------------------------------------------
+    // ORDER NUMBER
+    // ------------------------------------------------------------
+
+    const count = await Order.countDocuments({
+      owner,
+    });
+
+    const orderNumber =
+      req.body.orderNumber ||
+      `ORD${String(count + 1).padStart(4, "0")}`;
+
+    // ------------------------------------------------------------
+    // CREATE ORDER
+    // ------------------------------------------------------------
+
+    const order = await Order.create({
+      owner,
+
+      orderNumber,
+
+      client: client._id,
+      riceMill: riceMill._id,
+      driver: driver?._id || null,
+
+      clientName: client.name,
+      riceMillName: riceMill.name,
+
+      date: orderDate,
+      displayDate: formatIndianDate(orderDate),
+
+      lorryNumber: cleanString(
+        req.body.lorryNumber
+      ).toUpperCase(),
+
+      transportName: cleanString(
+        req.body.transportName
+      ),
+
+      driverName: cleanString(
+        req.body.driverName
+      ),
+
+      driverMobile: cleanPhone(
+        req.body.driverMobile
+      ),
+
+      items,
+
+      // All totals including discount
+      totals,
+
+      // Also store discount at top level
+      discountPercentage,
+      discountAmount,
+      netTotal,
+
+      paidAmount,
+
+      status: normalizeStatus(
+        paidAmount,
+        netTotal
+      ),
+
+      notes: cleanString(req.body.notes),
+    });
+
+    // ------------------------------------------------------------
+    // RESPONSE
+    // ------------------------------------------------------------
+
+    const populatedOrder = await order.populate(
+      "client riceMill driver"
+    );
+
+    return res.status(201).json(populatedOrder);
+  } catch (error) {
+    console.error("CREATE ORDER ERROR:", error);
+
+    return res.status(500).json({
+      message:
+        error?.message ||
+        "Unable to create order",
+    });
   }
-
-  const owner = req.user.id;
-  const [client, riceMill] = await Promise.all([
-    Client.findOne({ _id: clientId, owner }),
-    RiceMill.findOne({ _id: riceMillId, owner }),
-  ]);
-  if (!client) return res.status(400).json({ message: "Invalid client" });
-  if (!riceMill) return res.status(400).json({ message: "Invalid rice mill" });
-
-  const items = normalizeItems(req.body.items);
-  if (!items.length) return res.status(400).json({ message: "At least one valid rice item is required" });
-
-  const totals = calculateTotals(items);
-  const paidAmount = Math.min(Math.max(Number(req.body.paidAmount) || 0, 0), totals.grandTotal);
-  const orderDate = parseIndianDate(req.body.date || req.body.displayDate);
-  const driver = await ensureDriver(owner, req.body.driverName, req.body.driverMobile, req.body.lorryNumber);
-
-  const count = await Order.countDocuments({ owner });
-  const order = await Order.create({
-    owner,
-    orderNumber: req.body.orderNumber || `ORD${String(count + 1).padStart(4, "0")}`,
-    client: client._id,
-    riceMill: riceMill._id,
-    driver: driver?._id || null,
-    clientName: client.name,
-    riceMillName: riceMill.name,
-    date: orderDate,
-    displayDate: formatIndianDate(orderDate),
-    lorryNumber: cleanString(req.body.lorryNumber).toUpperCase(),
-    transportName: cleanString(req.body.transportName),
-    driverName: cleanString(req.body.driverName),
-    driverMobile: cleanPhone(req.body.driverMobile),
-    items,
-    totals,
-    paidAmount,
-    status: normalizeStatus(paidAmount, totals.grandTotal),
-    notes: cleanString(req.body.notes),
-  });
-
-  res.status(201).json(await order.populate("client riceMill driver"));
 }
 
 async function update(req, res) {
-  const order = await Order.findOne({ _id: req.params.id, owner: req.user.id });
-  if (!order) return res.status(404).json({ message: "Order not found" });
+  try {
+    // ============================================================
+    // FIND ORDER
+    // ============================================================
 
-  if (req.body.client || req.body.clientId) {
-    const client = await Client.findOne({ _id: req.body.client || req.body.clientId, owner: req.user.id });
-    if (!client) return res.status(400).json({ message: "Invalid client" });
-    order.client = client._id;
-    order.clientName = client.name;
+    const order = await Order.findOne({
+      _id: req.params.id,
+      owner: req.user.id,
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
+
+    // ============================================================
+    // CLIENT
+    // ============================================================
+
+    if (req.body.client || req.body.clientId) {
+      const clientId =
+        req.body.client || req.body.clientId;
+
+      const client = await Client.findOne({
+        _id: clientId,
+        owner: req.user.id,
+      });
+
+      if (!client) {
+        return res.status(400).json({
+          message: "Invalid client",
+        });
+      }
+
+      order.client = client._id;
+      order.clientName = client.name;
+    }
+
+    // ============================================================
+    // RICE MILL
+    // ============================================================
+
+    if (req.body.riceMill || req.body.riceMillId) {
+      const riceMillId =
+        req.body.riceMill || req.body.riceMillId;
+
+      const riceMill = await RiceMill.findOne({
+        _id: riceMillId,
+        owner: req.user.id,
+      });
+
+      if (!riceMill) {
+        return res.status(400).json({
+          message: "Invalid rice mill",
+        });
+      }
+
+      order.riceMill = riceMill._id;
+      order.riceMillName = riceMill.name;
+    }
+
+    // ============================================================
+    // ITEMS
+    // ============================================================
+
+    if (req.body.items !== undefined) {
+      const items = normalizeItems(req.body.items);
+
+      if (!items.length) {
+        return res.status(400).json({
+          message:
+            "At least one valid rice item is required",
+        });
+      }
+
+      order.items = items;
+    }
+
+    // ============================================================
+    // DATE
+    // ============================================================
+
+    if (
+      req.body.date !== undefined ||
+      req.body.displayDate !== undefined
+    ) {
+      order.date = parseIndianDate(
+        req.body.date ||
+        req.body.displayDate
+      );
+
+      order.displayDate =
+        formatIndianDate(order.date);
+    }
+
+    // ============================================================
+    // BASIC FIELDS
+    // ============================================================
+
+    const writable = [
+      "lorryNumber",
+      "transportName",
+      "driverName",
+      "notes",
+    ];
+
+    for (const field of writable) {
+      if (req.body[field] !== undefined) {
+        order[field] = cleanString(
+          req.body[field]
+        );
+      }
+    }
+
+    if (req.body.driverMobile !== undefined) {
+      order.driverMobile = cleanPhone(
+        req.body.driverMobile
+      );
+    }
+
+    // ============================================================
+    // RECALCULATE ORIGINAL TOTAL
+    // ============================================================
+
+    const calculatedTotals =
+      calculateTotals(order.items || []);
+
+    const grandTotal = Number(
+      calculatedTotals.grandTotal || 0
+    );
+
+    // ============================================================
+    // QUANTITY TOTALS
+    // Supports both possible property names
+    // ============================================================
+
+    const totalBags = Number(
+      calculatedTotals.totalBags ??
+      calculatedTotals.bags ??
+      (order.items || []).reduce(
+        (sum, item) =>
+          sum + Number(item.bags || 0),
+        0
+      )
+    );
+
+    const totalKg = Number(
+      calculatedTotals.totalKg ??
+      calculatedTotals.kg ??
+      (order.items || []).reduce(
+        (sum, item) =>
+          sum + Number(item.kg || 0),
+        0
+      )
+    );
+
+    const totalQuintal = Number(
+      calculatedTotals.totalQuintal ??
+      calculatedTotals.quintal ??
+      (order.items || []).reduce(
+        (sum, item) =>
+          sum + Number(item.quintal || 0),
+        0
+      )
+    );
+
+    // ============================================================
+    // DISCOUNT PERCENTAGE
+    //
+    // If frontend sends discountPercentage,
+    // use the new value.
+    //
+    // Otherwise preserve existing discount.
+    // Old orders automatically become 0%.
+    // ============================================================
+
+    let discountPercentage;
+
+    if (
+      req.body.discountPercentage !== undefined &&
+      req.body.discountPercentage !== null
+    ) {
+      discountPercentage = Number(
+        req.body.discountPercentage
+      );
+    } else {
+      discountPercentage = Number(
+        order.discountPercentage ??
+        order.totals?.discountPercentage ??
+        0
+      );
+    }
+
+    // Invalid value = 0
+    if (!Number.isFinite(discountPercentage)) {
+      discountPercentage = 0;
+    }
+
+    // Whole percentage only
+    discountPercentage =
+      Math.round(discountPercentage);
+
+    // Allowed range = 0% to 6%
+    discountPercentage = Math.min(
+      Math.max(discountPercentage, 0),
+      6
+    );
+
+    // ============================================================
+    // DISCOUNT AMOUNT
+    //
+    // ALWAYS calculate on backend.
+    // Don't trust frontend discountAmount.
+    // ============================================================
+
+    const discountAmount =
+      grandTotal *
+      (discountPercentage / 100);
+
+    // ============================================================
+    // NET TOTAL
+    // ============================================================
+
+    const netTotal = Math.max(
+      grandTotal - discountAmount,
+      0
+    );
+
+    // ============================================================
+    // UPDATE TOTALS
+    // ============================================================
+
+    order.totals = {
+      bags: totalBags,
+      kg: totalKg,
+      quintal: totalQuintal,
+
+      // Original amount
+      grandTotal,
+
+      // Discount
+      discountPercentage,
+      discountAmount,
+
+      // Final payable amount
+      netTotal,
+    };
+
+    // ============================================================
+    // TOP LEVEL DISCOUNT VALUES
+    // ============================================================
+
+    order.discountPercentage =
+      discountPercentage;
+
+    order.discountAmount =
+      discountAmount;
+
+    order.netTotal =
+      netTotal;
+
+    // ============================================================
+    // PAID AMOUNT
+    //
+    // Payment can NEVER be greater than NET TOTAL.
+    // ============================================================
+
+    const requestedPaidAmount =
+      req.body.paidAmount !== undefined
+        ? Number(req.body.paidAmount)
+        : Number(order.paidAmount || 0);
+
+    const paidAmount = Math.min(
+      Math.max(
+        Number.isFinite(requestedPaidAmount)
+          ? requestedPaidAmount
+          : 0,
+        0
+      ),
+      netTotal
+    );
+
+    order.paidAmount = paidAmount;
+
+    // ============================================================
+    // PAYMENT STATUS
+    //
+    // Use NET TOTAL, not GRAND TOTAL.
+    // ============================================================
+
+    order.status = normalizeStatus(
+      paidAmount,
+      netTotal
+    );
+
+    // ============================================================
+    // DRIVER
+    // ============================================================
+
+    const driver = await ensureDriver(
+      req.user.id,
+      order.driverName,
+      order.driverMobile,
+      order.lorryNumber
+    );
+
+    order.driver =
+      driver?._id || null;
+
+    // ============================================================
+    // SAVE
+    // ============================================================
+
+    await order.save();
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
+    const populatedOrder =
+      await order.populate(
+        "client riceMill driver"
+      );
+
+    return res.json(
+      populatedOrder
+    );
+  } catch (error) {
+    console.error(
+      "UPDATE ORDER ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        error?.message ||
+        "Unable to update order",
+    });
   }
-
-  if (req.body.riceMill || req.body.riceMillId) {
-    const riceMill = await RiceMill.findOne({ _id: req.body.riceMill || req.body.riceMillId, owner: req.user.id });
-    if (!riceMill) return res.status(400).json({ message: "Invalid rice mill" });
-    order.riceMill = riceMill._id;
-    order.riceMillName = riceMill.name;
-  }
-
-  if (req.body.items) {
-    const items = normalizeItems(req.body.items);
-    if (!items.length) return res.status(400).json({ message: "At least one valid rice item is required" });
-    order.items = items;
-    order.totals = calculateTotals(items);
-  }
-
-  if (req.body.date || req.body.displayDate) {
-    order.date = parseIndianDate(req.body.date || req.body.displayDate);
-    order.displayDate = formatIndianDate(order.date);
-  }
-
-  const writable = ["lorryNumber", "transportName", "driverName", "notes"];
-  for (const field of writable) if (req.body[field] !== undefined) order[field] = cleanString(req.body[field]);
-  if (req.body.driverMobile !== undefined) order.driverMobile = cleanPhone(req.body.driverMobile);
-
-  const paidAmount = req.body.paidAmount !== undefined ? Number(req.body.paidAmount) : order.paidAmount;
-  order.paidAmount = Math.min(Math.max(Number(paidAmount) || 0, 0), order.totals.grandTotal);
-  order.status = normalizeStatus(order.paidAmount, order.totals.grandTotal);
-  const driver = await ensureDriver(req.user.id, order.driverName, order.driverMobile, order.lorryNumber);
-  order.driver = driver?._id || null;
-  await order.save();
-
-  res.json(await order.populate("client riceMill driver"));
 }
 
 async function remove(req, res) {
