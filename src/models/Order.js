@@ -1,5 +1,9 @@
 const mongoose = require("mongoose");
 
+// ============================================================
+// ITEM
+// ============================================================
+
 const itemSchema = new mongoose.Schema(
   {
     riceName: {
@@ -20,12 +24,14 @@ const itemSchema = new mongoose.Schema(
       min: 0,
     },
 
+    // Total KG = Bags × KG per Bag
     kg: {
       type: Number,
       required: true,
       min: 0,
     },
 
+    // Quintal = Total KG / 100
     quintal: {
       type: Number,
       required: true,
@@ -80,7 +86,7 @@ const totalsSchema = new mongoose.Schema(
       min: 0,
     },
 
-    // Discount percentage
+    // Existing bill discount
     discountPercentage: {
       type: Number,
       default: 0,
@@ -88,14 +94,13 @@ const totalsSchema = new mongoose.Schema(
       max: 6,
     },
 
-    // Actual discount amount
     discountAmount: {
       type: Number,
       default: 0,
       min: 0,
     },
 
-    // Final amount after discount
+    // Final bill amount after discount
     netTotal: {
       type: Number,
       default: 0,
@@ -113,6 +118,10 @@ const totalsSchema = new mongoose.Schema(
 
 const schema = new mongoose.Schema(
   {
+    // ========================================================
+    // BASIC
+    // ========================================================
+
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -120,11 +129,23 @@ const schema = new mongoose.Schema(
       index: true,
     },
 
+    // Existing order number
     orderNumber: {
       type: String,
       required: true,
       trim: true,
     },
+
+    // Printed "No." on document
+    documentNumber: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // ========================================================
+    // CLIENT / RICE MILL
+    // ========================================================
 
     client: {
       type: mongoose.Schema.Types.ObjectId,
@@ -156,6 +177,10 @@ const schema = new mongoose.Schema(
       trim: true,
     },
 
+    // ========================================================
+    // DATE
+    // ========================================================
+
     date: {
       type: Date,
       required: true,
@@ -166,6 +191,21 @@ const schema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+
+    // ========================================================
+    // DISPATCH / RICE
+    // ========================================================
+
+    // Example: 1010 Boiled
+    dispatchRiceName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // ========================================================
+    // TRANSPORT
+    // ========================================================
 
     lorryNumber: {
       type: String,
@@ -190,6 +230,57 @@ const schema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    
+    brand: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // ========================================================
+    // LOADING / DELIVERY
+    // ========================================================
+
+    loadingRate: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    deliveryRate: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // ========================================================
+    // LORRY PAYMENT
+    // ========================================================
+
+    // Please Pay Lorry Freight
+    lorryFreight: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Less: Lorry Advance Paid
+    lorryAdvancePaid: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Balance to Pay = Freight - Advance
+    balanceToPay: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // ========================================================
+    // RICE ITEMS
+    // ========================================================
 
     items: {
       type: [itemSchema],
@@ -210,7 +301,7 @@ const schema = new mongoose.Schema(
     },
 
     // ========================================================
-    // DISCOUNT
+    // BILL DISCOUNT
     // ========================================================
 
     discountPercentage: {
@@ -233,6 +324,63 @@ const schema = new mongoose.Schema(
     },
 
     // ========================================================
+    // RTGS / CASH DISCOUNT
+    // ========================================================
+
+    // Example: 4%
+    rtgsPercentage: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Example: 2%
+    cashDiscountPercentage: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Example: 5 days
+    cashDiscountDays: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // ========================================================
+    // BANK
+    // ========================================================
+
+    bankName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    branchName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // ========================================================
+    // BILL DETAILS
+    // ========================================================
+
+    billNumber: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    billAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // ========================================================
     // PAYMENT
     // ========================================================
 
@@ -246,6 +394,16 @@ const schema = new mongoose.Schema(
       type: String,
       enum: ["Paid", "Partial", "Unpaid"],
       default: "Unpaid",
+    },
+
+    // ========================================================
+    // THROUGH / NOTES
+    // ========================================================
+
+    through: {
+      type: String,
+      trim: true,
+      default: "",
     },
 
     notes: {

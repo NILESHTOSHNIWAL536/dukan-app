@@ -75,8 +75,11 @@ async function list(req, res) {
 
 async function create(req, res) {
   try {
-    console.log("req.body");
-    console.log(req.body);
+    
+
+    // ========================================================
+    // CLIENT / RICE MILL
+    // ========================================================
 
     const clientId = req.body.client || req.body.clientId;
     const riceMillId = req.body.riceMill || req.body.riceMillId;
@@ -85,16 +88,23 @@ async function create(req, res) {
       !mongoose.isValidObjectId(clientId) ||
       !mongoose.isValidObjectId(riceMillId)
     ) {
-      return res
-        .status(400)
-        .json({ message: "Client and rice mill are required" });
+      return res.status(400).json({
+        message: "Client and rice mill are required",
+      });
     }
 
     const owner = req.user.id;
 
     const [client, riceMill] = await Promise.all([
-      Client.findOne({ _id: clientId, owner }),
-      RiceMill.findOne({ _id: riceMillId, owner }),
+      Client.findOne({
+        _id: clientId,
+        owner,
+      }),
+
+      RiceMill.findOne({
+        _id: riceMillId,
+        owner,
+      }),
     ]);
 
     if (!client) {
@@ -109,9 +119,9 @@ async function create(req, res) {
       });
     }
 
-    // ------------------------------------------------------------
+    // ========================================================
     // ITEMS
-    // ------------------------------------------------------------
+    // ========================================================
 
     const items = normalizeItems(req.body.items);
 
@@ -121,95 +131,126 @@ async function create(req, res) {
       });
     }
 
-    // ------------------------------------------------------------
-    // ORIGINAL TOTAL
-    // ------------------------------------------------------------
+    // ========================================================
+    // CALCULATE BILL TOTAL
+    // ========================================================
 
     const calculatedTotals = calculateTotals(items);
 
-    const grandTotal = Number(calculatedTotals.grandTotal || 0);
+    const grandTotal = Number(
+      calculatedTotals.grandTotal || 0
+    );
 
-    // ------------------------------------------------------------
-    // DISCOUNT
-    // Allowed only from 0% to 6%
-    // ------------------------------------------------------------
+    // ========================================================
+    // BILL DISCOUNT
+    // ========================================================
 
     let discountPercentage = Number(
       req.body.discountPercentage ?? 0
     );
 
-    // Invalid discount
     if (!Number.isFinite(discountPercentage)) {
       discountPercentage = 0;
     }
 
-    // Force discount between 0 and 6
     discountPercentage = Math.min(
       Math.max(discountPercentage, 0),
       6
     );
 
-    // Optional: keep only whole percentages
-    discountPercentage = Math.round(discountPercentage);
+    discountPercentage = Math.round(
+      discountPercentage
+    );
 
-    // ------------------------------------------------------------
+    // ========================================================
     // DISCOUNT AMOUNT
-    // ------------------------------------------------------------
+    // ========================================================
 
     const discountAmount =
-      grandTotal * (discountPercentage / 100);
+      grandTotal *
+      (discountPercentage / 100);
 
-    // ------------------------------------------------------------
-    // NET TOTAL
-    // ------------------------------------------------------------
+    // ========================================================
+    // NET BILL TOTAL
+    // ========================================================
 
     const netTotal = Math.max(
       grandTotal - discountAmount,
       0
     );
 
-    // ------------------------------------------------------------
-    // FINAL TOTALS
-    // ------------------------------------------------------------
+    // ========================================================
+    // TOTALS
+    // ========================================================
 
     const totals = {
-      bags: Number(calculatedTotals.totalBags || 0),
-      kg: Number(calculatedTotals.totalKg || 0),
-      quintal: Number(calculatedTotals.totalQuintal || 0),
+      bags: Number(
+        calculatedTotals.totalBags || 0
+      ),
 
-      // Original bill amount
+      kg: Number(
+        calculatedTotals.totalKg || 0
+      ),
+
+      quintal: Number(
+        calculatedTotals.totalQuintal || 0
+      ),
+
       grandTotal,
 
-      // Discount
       discountPercentage,
+
       discountAmount,
 
-      // Final payable amount
       netTotal,
     };
 
-    // ------------------------------------------------------------
+    // ========================================================
+    // LORRY PAYMENT
+    // ========================================================
+
+    const lorryFreight = Math.max(
+      Number(req.body.lorryFreight) || 0,
+      0
+    );
+
+    const lorryAdvancePaid = Math.min(
+      Math.max(
+        Number(req.body.lorryAdvancePaid) || 0,
+        0
+      ),
+      lorryFreight
+    );
+
+    const balanceToPay = Math.max(
+      lorryFreight - lorryAdvancePaid,
+      0
+    );
+
+    // ========================================================
     // PAID AMOUNT
-    // IMPORTANT:
-    // Paid amount cannot be greater than NET TOTAL
-    // ------------------------------------------------------------
+    // ========================================================
 
     const paidAmount = Math.min(
-      Math.max(Number(req.body.paidAmount) || 0, 0),
+      Math.max(
+        Number(req.body.paidAmount) || 0,
+        0
+      ),
       netTotal
     );
 
-    // ------------------------------------------------------------
+    // ========================================================
     // DATE
-    // ------------------------------------------------------------
+    // ========================================================
 
     const orderDate = parseIndianDate(
-      req.body.date || req.body.displayDate
+      req.body.date ||
+      req.body.displayDate
     );
 
-    // ------------------------------------------------------------
+    // ========================================================
     // DRIVER
-    // ------------------------------------------------------------
+    // ========================================================
 
     const driver = await ensureDriver(
       owner,
@@ -218,9 +259,9 @@ async function create(req, res) {
       req.body.lorryNumber
     );
 
-    // ------------------------------------------------------------
+    // ========================================================
     // ORDER NUMBER
-    // ------------------------------------------------------------
+    // ========================================================
 
     const count = await Order.countDocuments({
       owner,
@@ -230,27 +271,112 @@ async function create(req, res) {
       req.body.orderNumber ||
       `ORD${String(count + 1).padStart(4, "0")}`;
 
-    // ------------------------------------------------------------
+    // ========================================================
+    // DOCUMENT NUMBER
+    // ========================================================
+
+    const documentNumber = cleanString(
+      req.body.documentNumber ||
+      req.body.orderNumber ||
+      String(count + 1)
+    );
+
+    // ========================================================
+    // NEW PRINT DOCUMENT FIELDS
+    // ========================================================
+
+    const dispatchRiceName = cleanString(
+      req.body.dispatchRiceName
+    );
+
+    const loadingRate = Math.max(
+      Number(req.body.loadingRate) || 0,
+      0
+    );
+
+    const deliveryRate = Math.max(
+      Number(req.body.deliveryRate) || 0,
+      0
+    );
+
+    const rtgsPercentage = Math.max(
+      Number(req.body.rtgsPercentage) || 0,
+      0
+    );
+
+    const cashDiscountPercentage = Math.max(
+      Number(
+        req.body.cashDiscountPercentage
+      ) || 0,
+      0
+    );
+
+    const cashDiscountDays = Math.max(
+      Number(req.body.cashDiscountDays) || 0,
+      0
+    );
+
+    const bankName = cleanString(
+      req.body.bankName
+    );
+
+    const branchName = cleanString(
+      req.body.branchName
+    );
+
+    const billNumber = cleanString(
+      req.body.billNumber
+    );
+
+    const billAmount = Math.max(
+      Number(req.body.billAmount) || 0,
+      0
+    );
+
+    const through = cleanString(
+      req.body.through
+    );
+
+    // ========================================================
     // CREATE ORDER
-    // ------------------------------------------------------------
+    // ========================================================
 
     const order = await Order.create({
       owner,
 
+      // Basic
       orderNumber,
+      documentNumber,
 
+      // References
       client: client._id,
       riceMill: riceMill._id,
       driver: driver?._id || null,
 
+      // Names
       clientName: client.name,
       riceMillName: riceMill.name,
 
+      // Date
       date: orderDate,
       displayDate: formatIndianDate(orderDate),
 
+      // ======================================================
+      // PRINT DOCUMENT
+      // ======================================================
+
+      dispatchRiceName,
+
+      // ======================================================
+      // TRANSPORT
+      // ======================================================
+
       lorryNumber: cleanString(
         req.body.lorryNumber
+      ).toUpperCase(),
+      
+      brand: cleanString(
+        req.body.brand
       ).toUpperCase(),
 
       transportName: cleanString(
@@ -265,15 +391,66 @@ async function create(req, res) {
         req.body.driverMobile
       ),
 
+      // ======================================================
+      // LOADING / DELIVERY
+      // ======================================================
+
+      loadingRate,
+      deliveryRate,
+
+      // ======================================================
+      // LORRY PAYMENT
+      // ======================================================
+
+      lorryFreight,
+      lorryAdvancePaid,
+      balanceToPay,
+
+      // ======================================================
+      // ITEMS
+      // ======================================================
+
       items,
 
-      // All totals including discount
+      // ======================================================
+      // TOTALS
+      // ======================================================
+
       totals,
 
-      // Also store discount at top level
+      // ======================================================
+      // BILL DISCOUNT
+      // ======================================================
+
       discountPercentage,
       discountAmount,
       netTotal,
+
+      // ======================================================
+      // RTGS / CASH DISCOUNT
+      // ======================================================
+
+      rtgsPercentage,
+      cashDiscountPercentage,
+      cashDiscountDays,
+
+      // ======================================================
+      // BANK
+      // ======================================================
+
+      bankName,
+      branchName,
+
+      // ======================================================
+      // BILL
+      // ======================================================
+
+      billNumber,
+      billAmount,
+
+      // ======================================================
+      // PAYMENT
+      // ======================================================
 
       paidAmount,
 
@@ -282,20 +459,35 @@ async function create(req, res) {
         netTotal
       ),
 
-      notes: cleanString(req.body.notes),
+      // ======================================================
+      // OTHER
+      // ======================================================
+
+      through,
+
+      notes: cleanString(
+        req.body.notes
+      ),
     });
 
-    // ------------------------------------------------------------
-    // RESPONSE
-    // ------------------------------------------------------------
+    // ========================================================
+    // POPULATE
+    // ========================================================
 
-    const populatedOrder = await order.populate(
-      "client riceMill driver"
+    const populatedOrder =
+      await order.populate(
+        "client riceMill driver"
+      );
+
+    return res.status(201).json(
+      populatedOrder
     );
 
-    return res.status(201).json(populatedOrder);
   } catch (error) {
-    console.error("CREATE ORDER ERROR:", error);
+    console.error(
+      "CREATE ORDER ERROR:",
+      error
+    );
 
     return res.status(500).json({
       message:
@@ -304,6 +496,7 @@ async function create(req, res) {
     });
   }
 }
+
 
 async function update(req, res) {
   try {
